@@ -23,7 +23,7 @@ def kama(series: pd.Series, n: int = 200, fast: int = 2, slow: int = 30) -> pd.S
 
     This implementation is iterative but vectorized enough for typical dataset sizes.
     """
-    price = series.fillna(method="ffill").astype(float)
+    price = series.ffill().astype(float)
     length = len(price)
     kama = pd.Series(index=price.index, dtype=float)
 
