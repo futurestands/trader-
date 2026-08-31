@@ -69,24 +69,30 @@ async def main_loop():
 
     poll_interval = int(os.getenv("POLL_INTERVAL_SEC", "60"))
 
-    # A minimal mock market data generator (simple random walk) for now
-    import pandas as pd
-    import numpy as np
+    # Initialize data ingestion
+    from modules.data_ingestion import DataIngestion
+    data_ingestion = DataIngestion(exchange=os.getenv("DATA_EXCHANGE", "binance"), api_key=os.getenv("BINANCE_API_KEY"), api_secret=os.getenv("BINANCE_API_SECRET"), testnet=True)
 
-    # initial price
+    # initial price fallback
     price = float(os.getenv("START_PRICE", "1.1000"))
 
     while True:
         try:
-            # simulate new candle
-            n = 220
-            noise = np.random.normal(0, 0.0002, size=n)
-            closes = price + np.cumsum(noise)
-            highs = closes + np.abs(np.random.normal(0, 0.0001, size=n))
-            lows = closes - np.abs(np.random.normal(0, 0.0001, size=n))
-            opens = np.concatenate([[price], closes[:-1]])
-            vols = np.random.randint(1, 10, size=n)
-            df = pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes, "volume": vols})
+            # fetch OHLCV via DataIngestion; fallback to local generator on error
+            try:
+                timeframe = os.getenv("TIMEFRAME", "1m")
+                df = await data_ingestion.fetch_ohlcv(symbol, timeframe=timeframe, limit=250)
+            except Exception:
+                import pandas as pd
+                import numpy as np
+                n = 220
+                noise = np.random.normal(0, 0.0002, size=n)
+                closes = price + np.cumsum(noise)
+                highs = closes + np.abs(np.random.normal(0, 0.0001, size=n))
+                lows = closes - np.abs(np.random.normal(0, 0.0001, size=n))
+                opens = np.concatenate([[price], closes[:-1]])
+                vols = np.random.randint(1, 10, size=n)
+                df = pd.DataFrame({"open": opens, "high": highs, "low": lows, "close": closes, "volume": vols})
 
             # evaluate signals
             symbol = os.getenv("SYMBOL", "EURUSD")
