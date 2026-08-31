@@ -1,0 +1,202 @@
+//+------------------------------------------------------------------+
+//| AETMS_MT5_Bridge.mql5                                            |
+//| ZeroMQ REP bridge for Python engine                              |
+//+------------------------------------------------------------------+
+#include <Trade\Trade.mqh>
+#include <stdlib.mqh>
+
+// NOTE: This EA expects a ZeroMQ wrapper and JSON helper to be available
+// in the MQL5 Include path. Drop your ZeroMQ MQL5 wrapper (e.g., zmq.mqh)
+// and a JSON parser (e.g., json.mqh) into the MQL5\Include folder and
+// uncomment the following includes. Example wrapper names vary by project.
+// #include <ZeroMQ\zmq.mqh>
+// #include <JSON\json.mqh>
+
+input int ListenPort = 5555; // port where REP socket should listen
+input int PollIntervalSec = 1;
+
+// Trade object
+CTrade trade;
+
+// Placeholders for ZeroMQ context and socket handles if using a wrapper
+// int zmq_ctx = -1;
+// int zmq_socket = -1;
+
+int OnInit()
+{
+   // Initialize ZeroMQ REP socket here using your wrapper, example:
+   // zmq_ctx = ZmqCreateContext();
+   // zmq_socket = ZmqCreateSocket(zmq_ctx, ZMQ_REP);
+   // if(!ZmqBind(zmq_socket, StringFormat("tcp://*:%d", ListenPort)))
+   // {
+   //    Print("Failed to bind ZMQ REP socket");
+   //    return INIT_FAILED;
+   // }
+
+   EventSetTimer(PollIntervalSec);
+   Print("AETMS_MT5_Bridge initialized, listening on port ", ListenPort);
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   // Clean up ZeroMQ resources if using wrapper
+   // if(zmq_socket != -1) ZmqCloseSocket(zmq_socket);
+   // if(zmq_ctx != -1) ZmqDestroyContext(zmq_ctx);
+}
+
+// Helper to normalize lot size to symbol constraints
+double NormalizeLot(string symbol, double lots)
+{
+   double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+   if(minLot <= 0) minLot = 0.01;
+   if(step <= 0) step = 0.01;
+   double n = MathMax(minLot, MathMin(maxLot, lots));
+   // round to step
+   double steps = MathFloor(n / step + 0.5);
+   double res = steps * step;
+   // ensure within bounds
+   if(res < minLot) res = minLot;
+   if(res > maxLot) res = maxLot;
+   return NormalizeDouble(res, 2);
+}
+
+// Very small JSON extraction helper when no JSON lib is available
+string ExtractJsonString(const string json, const string key)
+{
+   string pattern = '"' + key + '"';
+   int p = StringFind(json, pattern);
+   if(p == -1) return(""
+);
+   int colon = StringFind(json, ":", p);
+   if(colon == -1) return("");
+   int quote = StringFind(json, '"', colon+1);
+   if(quote == -1) return("");
+   int quote2 = StringFind(json, '"', quote+1);
+   if(quote2 == -1) return("");
+   return(StringSubstr(json, quote+1, quote2-quote-1));
+}
+
+double ExtractJsonNumber(const string json, const string key)
+{
+   string pattern = '"' + key + '"';
+   int p = StringFind(json, pattern);
+   if(p == -1) return(0.0);
+   int colon = StringFind(json, ":", p);
+   if(colon == -1) return(0.0);
+   int start = colon+1;
+   // skip spaces
+   while(start < StringLen(json) && (StringGetCharacter(json, start) == ' ' || StringGetCharacter(json, start) == '\t')) start++;
+   int end = start;
+   while(end < StringLen(json))
+   {
+      uchar c = StringGetCharacter(json, end);
+      if((c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+') end++; else break;
+   }
+   string num = StringSubstr(json, start, end-start);
+   return(StringToDouble(num));
+}
+
+void OnTimer()
+{
+   // Poll ZMQ for incoming messages and reply
+   // Example using wrapper:
+   // string msg = ZmqRecvString(zmq_socket, 0);
+   // if(StringLen(msg) == 0) return;
+   // Otherwise parse JSON and execute
+
+   // Since ZeroMQ wrapper isn't included here, we show placeholder logic.
+   // Place your wrapper's recv code below and replace 'incoming' with received string.
+   string incoming = "";
+
+   // --- START: replace this block with actual ZMQ recv ---
+   // For local testing you might write incoming from a file or terminal.
+   // --- END: replace block ---
+
+   if(StringLen(incoming) == 0) return;
+
+   Print("Received request: ", incoming);
+
+   string action = ExtractJsonString(incoming, "action");
+   string symbol = ExtractJsonString(incoming, "symbol");
+   double lot = ExtractJsonNumber(incoming, "lots");
+   double price = ExtractJsonNumber(incoming, "price");
+   double sl = ExtractJsonNumber(incoming, "stop_price");
+   double tp = ExtractJsonNumber(incoming, "take_profit");
+
+   string response = "{""status"":""FAILED"",""error"":""unknown""}";
+
+   if(StringLen(action) == 0 || StringLen(symbol) == 0)
+   {
+      response = StringFormat("{\"status\":\"FAILED\",\"error\":\"missing_fields\"}");
+      // ZmqSendString(zmq_socket, response);
+      Print(response);
+      return;
+   }
+
+   double nl = NormalizeLot(symbol, lot);
+   bool ok = false;
+   ulong ticket = 0;
+   string err = "";
+
+   if(StringCompare(action, "BUY") == 0 || StringCompare(action, "buy") == 0)
+   {
+      double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      double price_to_use = price <= 0.0 ? ask : price;
+      ok = trade.Buy(nl, symbol, price_to_use, sl, tp);
+      if(ok) ticket = trade.ResultOrder(); else err = trade.ResultRetcodeDescription();
+   }
+   else if(StringCompare(action, "SELL") == 0 || StringCompare(action, "sell") == 0)
+   {
+      double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+      double price_to_use = price <= 0.0 ? bid : price;
+      ok = trade.Sell(nl, symbol, price_to_use, sl, tp);
+      if(ok) ticket = trade.ResultOrder(); else err = trade.ResultRetcodeDescription();
+   }
+   else if(StringCompare(action, "CLOSE") == 0 || StringCompare(action, "close") == 0)
+   {
+      // attempt to close positions for symbol
+      ulong pos_ticket = PositionGetTicket(PositionGetInteger(POSITION_IDENTIFIER));
+      // naive close: loop positions and close matching symbol
+      for(int i=PositionsTotal()-1;i>=0;i--)
+      {
+         if(PositionSelectByIndex(i))
+         {
+            string psym = PositionGetString(POSITION_SYMBOL);
+            if(StringCompare(psym, symbol) == 0)
+            {
+               ulong p_ticket = PositionGetInteger(POSITION_TICKET);
+               double volume = PositionGetDouble(POSITION_VOLUME);
+               if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+                  ok = trade.PositionClose(p_ticket);
+               else
+                  ok = trade.PositionClose(p_ticket);
+            }
+         }
+      }
+      if(!ok) err = "close_failed";
+   }
+   else
+   {
+      err = "unknown_action";
+   }
+
+   if(ok)
+      response = StringFormat("{\"status\":\"SUCCESS\",\"ticket\":%I64u}", ticket);
+   else
+      response = StringFormat("{\"status\":\"FAILED\",\"error\":\"%s\"}", err);
+
+   // send response back via ZMQ
+   // ZmqSendString(zmq_socket, response);
+   Print("Reply: ", response);
+}
+
+// OnTick not used but required
+void OnTick()
+{
+}
+
+//+------------------------------------------------------------------+
