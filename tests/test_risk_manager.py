@@ -48,11 +48,14 @@ def fake_get_db_conn_ok():
 @patch("python_engine.modules.risk_manager._get_db_conn", side_effect=fake_get_db_conn_ok)
 def test_evaluate_order_lot_size(mock_db):
     rm = RiskManager(account_balance=10000, max_risk_percent=1.0)
-    # entry 1.0, stop 0.99 -> distance 0.01; expected lots = (10000*0.01)/(0.01*100000)=0.1
+    # With ATR=0.01 and SL = 1.5 * ATR => sl_distance = 0.015
+    # risk_amount = 10000 * 0.01 = 100
+    # loss_per_lot = 0.015 * contract_size(100000) * pip_value(1) = 1500
+    # lots = 100 / 1500 ~= 0.0666 -> rounds to 0.07
     decision = rm.evaluate_order(symbol="EURUSD", side="buy", price=1.0, atr=0.01, avg_spread=0.0001, current_spread=0.0001, sentiment=1.0)
     assert decision["approved"] is True
     assert "order" in decision
-    assert round(decision["order"]["lots"], 2) == 0.1
+    assert round(decision["order"]["lots"], 2) == 0.07
 
 
 def test_kill_switch_triggers(monkeypatch):
