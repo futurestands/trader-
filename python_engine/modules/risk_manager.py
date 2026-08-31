@@ -143,5 +143,53 @@ class RiskManager:
         except Exception:
             logger.exception("Failed to record system event")
 
+    def evaluate_order(self, symbol: str, side: str, price: float, atr: float, avg_spread: float, current_spread: float, sentiment: float = 0.0) -> dict:
+        """Evaluate a prospective order and return approval plus order payload.
+
+        Returns: {approved: bool, reason: str, order: dict}
+        order dict contains: action, symbol, lots, price, stop_price, take_profit
+        """
+        try:
+            # auto-reject if sentiment strongly contradicts signal
+            if sentiment < 0.0 and side.lower() == "buy":
+                return {"approved": False, "reason": "negative_sentiment", "order": {}}
+            if sentiment > 0.0 and side.lower() == "sell":
+                return {"approved": False, "reason": "positive_sentiment", "order": {}}
+
+            if not self.spread_allowed(avg_spread=avg_spread, current_spread=current_spread):
+                return {"approved": False, "reason": "spread_too_wide", "order": {}}
+
+            if not self.check_daily_drawdown():
+                return {"approved": False, "reason": "daily_drawdown_exceeded", "order": {}}
+
+            # ATR-based SL/TP rules: SL = 1.5 ATR, TP = 3.0 ATR
+            sl_distance = 1.5 * float(atr)
+            tp_distance = 3.0 * float(atr)
+
+            if side.lower() == "buy":
+                stop_price = price - sl_distance
+                take_profit = price + tp_distance
+            else:
+                stop_price = price + sl_distance
+                take_profit = price - tp_distance
+
+            lots = self.calculate_position_size(entry_price=price, stop_price=stop_price)
+            order = {
+                "action": side.upper(),
+                "symbol": symbol,
+                "lots": float(lots),
+                "price": float(price),
+                "stop_price": float(stop_price),
+                "take_profit": float(take_profit),
+            }
+
+            if lots <= 0.0:
+                return {"approved": False, "reason": "zero_lot_size", "order": order}
+
+            return {"approved": True, "reason": "ok", "order": order}
+        except Exception:
+            logger.exception("Error evaluating order")
+            return {"approved": False, "reason": "exception", "order": {}}
+
 
 __all__ = ["RiskManager"]
